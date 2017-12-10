@@ -1,8 +1,19 @@
 #include <stdio.h>
-#include <assert.h>
 #include <vector>
 #include <random>
+#include <assert.h>
 
+#include <GLFW\glfw3.h>
+#include "linmath.h"
+#include <stdlib.h>
+
+
+#define SCREEN_STRIDE 2
+#define SCREEN_MIN -1
+#define SCREEN_MAX 1
+#define GAME_BOARD_STRIDE 1
+#define PADDLE_WIDTH 0.03
+#define PADDLE_HEIGHT_IN_WINDOW 0.4
 
 #define BOARD_HEIGHT 1
 #define BOARD_WIDTH 1
@@ -13,7 +24,8 @@
 #define LO_RANDOM_VELOCITY_X -0.015
 #define HI_RANDOM_VELOCITY_Y 0.03
 #define LO_RANDOM_VELOCITY_Y -0.03
-#define BALL_SPEED_LIMIT 0.5
+#define BALL_SPEED_LIMIT 0.02
+
 
 enum ACTION
 {
@@ -37,6 +49,7 @@ enum PLAYER_TYPE
 {
     RL_AI,
     AI,
+    TRAINER_AI,
     NUM_AI
 };
 
@@ -67,6 +80,10 @@ public:
 
     void chooseMove(PLAYER_TYPE playerType, BallState* ballState)
     {
+        if (playerType == TRAINER_AI)
+        {
+            posY = ballState->posY - (PADDLE_HEIGHT / 2);
+        }
         if (playerType == AI)
         {
             if (posY + (PADDLE_HEIGHT / 2) > ballState->posY)
@@ -301,7 +318,7 @@ public:
         BallState ballState = {ball->posX, ball->posY, ball->velocityX, ball->velocityY};
         //while (!gameOver)
         //{
-            paddleL->chooseMove(AI, &ballState);
+            paddleL->chooseMove(TRAINER_AI, &ballState);
             paddleR->chooseMove(AI, &ballState);
             frameResult = ball->move();
             if (frameResult == AI_WIN )
@@ -319,3 +336,118 @@ public:
             return frameResult;
     }
 };
+
+float gameBoardToWindowPosX(float gameBoardPos)
+{
+    float windowPos = (gameBoardPos / GAME_BOARD_STRIDE) * SCREEN_STRIDE + SCREEN_MIN;
+    return windowPos;
+}
+
+float gameBoardToWindowPosY(float gameBoardPos)
+{
+    float windowPos = -((gameBoardPos / GAME_BOARD_STRIDE) * SCREEN_STRIDE + SCREEN_MIN);
+    return windowPos;
+}
+
+void renderRPaddle(float paddlePosY)
+{
+    float screenRPaddlePosY = gameBoardToWindowPosY(paddlePosY);
+    glBegin(GL_POLYGON);
+    //lower right
+    glVertex2f(SCREEN_MAX, screenRPaddlePosY - PADDLE_HEIGHT_IN_WINDOW);
+    //lower left
+    glVertex2f(SCREEN_MAX - PADDLE_WIDTH, screenRPaddlePosY - PADDLE_HEIGHT_IN_WINDOW);
+    //upper left
+    glVertex2f(SCREEN_MAX - PADDLE_WIDTH, screenRPaddlePosY);
+    //upper right
+    glVertex2f(SCREEN_MAX, screenRPaddlePosY);
+    glEnd();
+}
+
+void renderLPaddle(float paddlePos)
+{
+    float screenLPaddlePosY = gameBoardToWindowPosY(paddlePos);
+    glBegin(GL_POLYGON);
+    //lower right
+    glVertex2f(SCREEN_MIN + PADDLE_WIDTH, screenLPaddlePosY - PADDLE_HEIGHT_IN_WINDOW);
+    //lower left
+    glVertex2f(SCREEN_MIN, screenLPaddlePosY - PADDLE_HEIGHT_IN_WINDOW);
+    //upper left
+    glVertex2f(SCREEN_MIN, screenLPaddlePosY);
+    //upper right
+    glVertex2f(SCREEN_MIN + PADDLE_WIDTH, screenLPaddlePosY);
+    glEnd();
+}
+
+void renderBall(float x, float y)
+{
+    const float DEG2RAD = 3.14159 / 180;
+    float ballRadius = 0.02;
+
+    glBegin(GL_POLYGON);
+    //for each degree of the circle, we draw a point
+    for (int i = 0; i < 360; i++)
+    {
+        //convert degree to radians
+        float degInRad = i * DEG2RAD; //DEG2RAD : how much radians is 1 degree
+                                      //draw a dot on screen given x(1st argument) and y(second argument) coordinat
+        glVertex2f(cos(degInRad) * ballRadius + gameBoardToWindowPosX(x), sin(degInRad) * ballRadius + gameBoardToWindowPosY(y));
+    }
+    glEnd();
+}
+
+int main(void) 
+{
+    Game* game = new Game();
+    game->initialize();
+    // initialize glfw and exit if failed
+    if (!glfwInit()) {
+        exit(EXIT_FAILURE);
+    }
+
+    //telling he program the contextual information about openGL version
+    glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 2);
+    glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 0);
+    GLFWwindow* window = glfwCreateWindow(480, 480, "OpenGLtest", NULL, NULL);
+    if (!window) 
+    {
+        glfwTerminate();
+        exit(EXIT_FAILURE);
+    }
+    glfwMakeContextCurrent(window);
+    // the refresh between each frame. Setting it to 1 introduces a little delay for vSync
+    glfwSwapInterval(1);
+
+    while (!game->gameOver && !glfwWindowShouldClose(window))
+    {
+        game->playOneFrame();
+        //Setup View
+        float ratio;
+        int width, height;
+        //this function figures out the width and height of the window and set these variables
+        glfwGetFramebufferSize(window, &width, &height);
+        ratio = (float)width / height;
+        //set up view port
+        glViewport(0, 0, width, height);
+        // GL_COLOR_BUFFER_BIT stores the color info of what's drawn on screen. glClear() clears this info
+        glClear(GL_COLOR_BUFFER_BIT);
+
+        //drawing.
+        //from left to right of the window, the interval is [-1,1] . Similar for up and down
+        
+        // To draw a n sides GL_POLYGON on 2D surface, need to call glVertex2f() n times specifying the vertices of the polygon in some order
+        //This example shows an example of a rectangle
+        renderBall(game->ball->posX, game->ball->posY);
+        renderLPaddle(game->paddleL->posY);
+        renderRPaddle(game->paddleR->posY);
+
+        //swap the front and back buffers of the specified window
+        glfwSwapBuffers(window);
+        //check for events
+        glfwPollEvents();
+    }
+    game->destroy();
+    glfwDestroyWindow(window);
+    glfwTerminate();
+    exit(EXIT_SUCCESS);
+}
